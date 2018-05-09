@@ -44,11 +44,14 @@ func localConsumer(p Pipe, key string, cerr *int64) {
 		return
 	}
 	var i int
-	for c.FetchNext() {
-		in, err := c.Pop()
+	for {
+		in, err := c.FetchNext()
 		if log.E(err) {
 			atomic.AddInt64(cerr, 1)
 			return
+		}
+		if in == nil {
+			break
 		}
 		b := in.([]byte)
 		if len(b) == 0 {

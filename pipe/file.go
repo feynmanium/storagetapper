@@ -40,8 +40,7 @@ import (
 	"golang.org/x/crypto/openpgp"
 	"golang.org/x/crypto/openpgp/armor"
 	"golang.org/x/crypto/openpgp/packet"
-	"golang.org/x/net/context" //"context"
-
+	//"context"
 	"github.com/fsnotify/fsnotify"
 	"github.com/uber/storagetapper/config"
 	"github.com/uber/storagetapper/log"
@@ -116,9 +115,7 @@ type fileProducer struct {
 // fileConsumer consumes messages from File using topic and partition specified during consumer creation
 type fileConsumer struct {
 	*filePipe
-
-	ctx    context.Context
-	cancel context.CancelFunc
+	baseConsumer
 	topic  string
 	file   io.ReadCloser
 	name   string
@@ -227,19 +224,19 @@ func (p *filePipe) NewProducer(topic string) (Producer, error) {
 	return &fileProducer{filePipe: p, topic: topic, files: make(map[string]*file), fs: &fileFS{}, metrics: m}, nil
 }
 
-func (p *filePipe) initConsumer(c *fileConsumer) (Consumer, error) {
-	c.ctx, c.cancel = context.WithCancel(context.Background())
+func (p *filePipe) initConsumer(c *fileConsumer, fn fetchFunc) (Consumer, error) {
+	c.initBaseConsumer(fn)
 
-	fn, offset, err := c.seek(c.topic, InitialOffset)
+	fname, offset, err := c.seek(c.topic, InitialOffset)
 	if log.E(err) {
 		return nil, err
 	}
 
-	if fn == "" {
+	if fname == "" {
 		return c, nil
 	}
 
-	c.openFile(fn, offset)
+	c.openFile(fname, offset)
 
 	return c, nil
 }
@@ -252,7 +249,7 @@ func (p *filePipe) NewConsumer(topic string) (Consumer, error) {
 	}
 	m := metrics.NewFilePipeMetrics("pipe_consumer", map[string]string{"topic": topic, "pipeType": "file"})
 	c := &fileConsumer{filePipe: p, topic: topic, fs: &fileFS{}, metrics: m, watcher: w}
-	return p.initConsumer(c)
+	return p.initConsumer(c, c.fetchNext)
 }
 
 func topicPath(datadir string, topic string) string {
@@ -983,24 +980,34 @@ func (p *fileConsumer) fetchNextLow() bool {
 	return false
 }
 
-//FetchNext fetches next message from File and commits offset read
-func (p *fileConsumer) FetchNext() bool {
+//fetchNext fetches next message from File and commits offset read
+func (p *fileConsumer) fetchNext() (interface{}, error) {
 	for {
 		if p.fetchNextLow() {
-			return true
+			return p.msg, p.err
 		}
 		if !p.waitAndOpenNextFile() {
-			return false //context canceled, no message
+			return nil, p.err
 		}
 		if p.err != nil {
-			return true //has message with error set
+			return p.msg, p.err
 		}
 	}
 }
 
-//Pop pops pipe message
-func (p *fileConsumer) Pop() (interface{}, error) {
-	return p.msg, p.err
+//fetchNext fetches next message from File and commits offset read
+func (p *fileConsumer) fetchNextPoll() (interface{}, error) {
+	for {
+		if p.fetchNextLow() {
+			return p.msg, p.err
+		}
+		if !p.waitAndOpenNextFilePoll() {
+			return nil, p.err
+		}
+		if p.err != nil {
+			return p.msg, p.err
+		}
+	}
 }
 
 //Close closes consumer
@@ -1011,6 +1018,7 @@ func (p *fileConsumer) close(graceful bool) (err error) {
 		log.E(err)
 	}
 	p.cancel()
+	p.wg.Wait()
 	if p.file != nil {
 		err = p.file.Close()
 		log.E(err)

@@ -26,7 +26,7 @@ import (
 	"sync"
 
 	"github.com/uber/storagetapper/config"
-	"golang.org/x/net/context" //"context"
+	//"context"
 )
 
 //localPipe pipe based on channels
@@ -38,10 +38,8 @@ type localPipe struct {
 
 //localProducerConsumer implements both producer and consumer
 type localProducerConsumer struct {
-	ch     chan interface{}
-	ctx    context.Context
-	cancel context.CancelFunc
-	msg    interface{}
+	baseConsumer
+	ch chan interface{}
 }
 
 func init() {
@@ -75,8 +73,9 @@ func (p *localPipe) registerProducerConsumer(key string) (*localProducerConsumer
 		p.ch[key] = ch
 	}
 	p.mutex.Unlock()
-	ctx, cancel := context.WithCancel(context.Background())
-	return &localProducerConsumer{ch, ctx, cancel, nil}, nil
+	l := &localProducerConsumer{ch: ch}
+	l.initBaseConsumer(l.fetchNext)
+	return l, nil
 }
 
 //NewConsumer registers consumer with the given pipe name
@@ -119,23 +118,17 @@ func (p *localProducerConsumer) PushSchema(key string, data []byte) error {
 	return p.PushBatch(key, data)
 }
 
-//FetchNext receives next message from pipe. It's a blocking call, message can
-//later be retreived by Pop call
-func (p *localProducerConsumer) FetchNext() bool {
-	select {
-	case p.msg = <-p.ch:
-		if p.msg == nil {
-			return false
-		}
-		return true
-	case <-p.ctx.Done():
-	}
-	return false
+func (p *localProducerConsumer) FetchNext() (interface{}, error) {
+	return p.fetchNext()
 }
 
-//Pop retreives message fetched by FetchNext
-func (p *localProducerConsumer) Pop() (interface{}, error) {
-	return p.msg, nil
+func (p *localProducerConsumer) fetchNext() (interface{}, error) {
+	select {
+	case msg := <-p.ch:
+		return msg, nil
+	case <-p.ctx.Done():
+	}
+	return nil, nil
 }
 
 //PushK pushes keyed message to pipe
@@ -146,6 +139,7 @@ func (p *localProducerConsumer) PushK(key string, b interface{}) error {
 //Close producer/consumer
 func (p *localProducerConsumer) close(graceful bool) error {
 	p.cancel()
+	p.wg.Wait()
 	return nil
 }
 
