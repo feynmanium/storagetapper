@@ -65,6 +65,7 @@ type table struct {
 	version      int
 	outputFormat string
 	params       string
+	noDeletes    bool
 
 	snapshottedAt time.Time
 }
@@ -231,7 +232,7 @@ func (b *mysqlReader) addNewTable(t *state.Row) bool {
 		return false
 	}
 
-	nt := &table{t.ID, false, p, t.RawSchema, t.SchemaGtid, t.Service, enc, t.Output, t.Version, t.OutputFormat, t.ParamsRaw, t.SnapshottedAt}
+	nt := &table{t.ID, false, p, t.RawSchema, t.SchemaGtid, t.Service, enc, t.Output, t.Version, t.OutputFormat, t.ParamsRaw, t.Params.NoDeleteOnUpdate, t.SnapshottedAt}
 
 	if b.tables[t.Db][t.Table] == nil {
 		b.tables[t.Db][t.Table] = make([]*table, 0)
@@ -512,7 +513,7 @@ func (b *mysqlReader) handleRowsEventLow(ev *replication.BinlogEvent, t *table) 
 		}
 	case replication.UPDATE_ROWS_EVENTv1, replication.UPDATE_ROWS_EVENTv2:
 		for i := 0; i < len(re.Rows) && err == nil; i += 2 {
-			if !strings.HasSuffix(t.outputFormat, "_idempotent") {
+			if !t.noDeletes && !strings.HasSuffix(t.outputFormat, "_idempotent") {
 				err = b.produceRow(types.Delete, t, ts, &re.Rows[i])
 			}
 			if err == nil {

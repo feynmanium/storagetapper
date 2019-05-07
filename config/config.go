@@ -158,6 +158,9 @@ type TableParams struct {
 	NoSnapshot bool `yaml:"no_snapshot"`
 
 	RowFilter `yaml:"row_filter"`
+
+	// Produce just insert event on update
+	NoDeleteOnUpdate bool `yaml:"no_delete_on_update"`
 }
 
 // RowFilter has the condition, column name & values on which filter will be applied
